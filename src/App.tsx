@@ -26,6 +26,8 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
   const [totalLines, setTotalLines] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
   const [foldingEnabled, setFoldingEnabled] = useState(true);
+  const [horizontalOffset, setHorizontalOffset] = useState(0);
+  const [wordWrap, setWordWrap] = useState(false);
   const contextLines = 3; // Number of context lines to show above/below changes
 
   const terminalHeight = process.stdout.rows || 24;
@@ -68,6 +70,25 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
     if (input === 'f' || input === 'F') {
       setFoldingEnabled(!foldingEnabled);
       return;
+    }
+
+    // Toggle word wrap
+    if (input === 'w' || input === 'W') {
+      setWordWrap(!wordWrap);
+      setHorizontalOffset(0); // Reset horizontal scroll when toggling wrap
+      return;
+    }
+
+    // Horizontal scrolling (only when word wrap is off)
+    if (!wordWrap) {
+      if (key.leftArrow && !key.shift && !key.meta && !key.ctrl) {
+        setHorizontalOffset(Math.max(0, horizontalOffset - 5));
+        return;
+      }
+      if (key.rightArrow && !key.shift && !key.meta && !key.ctrl) {
+        setHorizontalOffset(horizontalOffset + 5);
+        return;
+      }
     }
 
     if (input === 'q' || (key.ctrl && input === 'c')) {
@@ -167,10 +188,18 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       <Text
         color={getColorForType(type)}
         bold={isCurrent}
+        wrap={wordWrap ? 'wrap' : 'truncate-end'}
       >
         {content}
       </Text>
     );
+  };
+
+  const applyHorizontalScroll = (text: string): string => {
+    if (wordWrap || horizontalOffset === 0) {
+      return text;
+    }
+    return text.substring(horizontalOffset);
   };
 
   const renderLines = () => {
@@ -270,14 +299,15 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
                 {leftNum}{leftPrefix}
               </Text>
               {showInlineDiff ? (
-                renderInlineDiff(leftLine.content, rightLine.content, 'remove', isCurrentLine)
+                renderInlineDiff(applyHorizontalScroll(leftLine.content), rightLine.content, 'remove', isCurrentLine)
               ) : (
                 <Text
                   color={getColorForType(leftLine.type)}
                   bold={isCurrentLine}
                   dimColor={leftLine.type === 'empty'}
+                  wrap={wordWrap ? 'wrap' : 'truncate-end'}
                 >
-                  {leftLine.content || (leftLine.type === 'empty' ? '⋯' : ' ')}
+                  {applyHorizontalScroll(leftLine.content || (leftLine.type === 'empty' ? '⋯' : ' '))}
                 </Text>
               )}
             </Box>
@@ -291,14 +321,15 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
                 {rightNum}{rightPrefix}
               </Text>
               {showInlineDiff ? (
-                renderInlineDiff(leftLine.content, rightLine.content, 'add', isCurrentLine)
+                renderInlineDiff(leftLine.content, applyHorizontalScroll(rightLine.content), 'add', isCurrentLine)
               ) : (
                 <Text
                   color={getColorForType(rightLine.type)}
                   bold={isCurrentLine}
                   dimColor={rightLine.type === 'empty'}
+                  wrap={wordWrap ? 'wrap' : 'truncate-end'}
                 >
-                  {rightLine.content || (rightLine.type === 'empty' ? '⋯' : ' ')}
+                  {applyHorizontalScroll(rightLine.content || (rightLine.type === 'empty' ? '⋯' : ' '))}
                 </Text>
               )}
             </Box>
@@ -338,7 +369,9 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
         <Text>
           Line {currentLine + 1}/{totalLines} | Section {currentSection + 1}/{diffSections.length} |
           <Text color={foldingEnabled ? 'green' : 'gray'}> Fold:{foldingEnabled ? 'ON' : 'OFF'}</Text> |
-          <Text color="gray"> ↑↓:line | n/p:section | u/d:page | f:fold | ?:help | q:quit</Text>
+          <Text color={wordWrap ? 'green' : 'gray'}> Wrap:{wordWrap ? 'ON' : 'OFF'}</Text>
+          {!wordWrap && horizontalOffset > 0 && <Text color="yellow"> Scroll→{horizontalOffset}</Text>} |
+          <Text color="gray"> {wordWrap ? '↑↓' : '←→↑↓'}:nav | w:wrap | f:fold | ?:help</Text>
         </Text>
       </Box>
 
@@ -367,8 +400,12 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
             <Text>  Shift + ↑↓    Page up / page down (alternative)</Text>
             <Text>  Cmd/Ctrl + ↑↓ Jump sections (alternative)</Text>
             <Text> </Text>
-            <Text><Text color="yellow">Actions:</Text></Text>
+            <Text><Text color="yellow">View:</Text></Text>
             <Text>  f             Toggle folding of unchanged sections</Text>
+            <Text>  w             Toggle word wrap</Text>
+            <Text>  ← / →         Horizontal scroll (when wrap is off)</Text>
+            <Text> </Text>
+            <Text><Text color="yellow">Actions:</Text></Text>
             <Text>  ?             Toggle this help screen</Text>
             <Text>  q / Ctrl+C    Quit</Text>
             <Text> </Text>
@@ -383,7 +420,9 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
 function computeDiffSections(left: string, right: string): DiffSection[] {
   const leftLines = left.split('\n');
   const rightLines = right.split('\n');
-  const changes = Diff.diffLines(left, right);
+
+  // Use diffArrays for cleaner line-by-line comparison
+  const changes = Diff.diffArrays(leftLines, rightLines);
 
   const sections: DiffSection[] = [];
   let leftIndex = 0;
@@ -392,10 +431,7 @@ function computeDiffSections(left: string, right: string): DiffSection[] {
   // Process changes and merge adjacent removed/added sections for vertical alignment
   for (let i = 0; i < changes.length; i++) {
     const change = changes[i];
-    const lines = change.value.split('\n');
-    if (lines.length > 0 && lines[lines.length - 1] === '') {
-      lines.pop();
-    }
+    const lines = Array.isArray(change.value) ? change.value : [change.value];
 
     const section: DiffSection = {
       leftStart: leftIndex,
@@ -407,10 +443,7 @@ function computeDiffSections(left: string, right: string): DiffSection[] {
     if (change.removed && i + 1 < changes.length && changes[i + 1].added) {
       // Removed section followed by added section - merge them with vertical alignment
       const nextChange = changes[i + 1];
-      const nextLines = nextChange.value.split('\n');
-      if (nextLines.length > 0 && nextLines[nextLines.length - 1] === '') {
-        nextLines.pop();
-      }
+      const nextLines = Array.isArray(nextChange.value) ? nextChange.value : [nextChange.value];
 
       const maxLen = Math.max(lines.length, nextLines.length);
 
