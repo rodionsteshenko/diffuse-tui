@@ -12,11 +12,14 @@ npm run build
 ## Usage
 
 ```bash
-# Compare two files
-./diffuse test-original.txt test-modified.txt
+# Compare the included test files (recommended for testing features)
+./diffuse test-original.js test-modified.js
 
 # Or using npm
-npm start test-original.txt test-modified.txt
+npm start test-original.js test-modified.js
+
+# Compare any two files
+./diffuse file1.txt file2.txt
 
 # View a unified diff
 ./diffuse -d changes.diff
@@ -24,6 +27,15 @@ npm start test-original.txt test-modified.txt
 # Demo mode (no arguments)
 npm start
 ```
+
+## Test Files
+
+The repository includes `test-original.js` and `test-modified.js` which demonstrate:
+- **Character-level diffs**: Single-word and multi-word changes
+- **Long lines**: Lines exceeding 100 characters (tests horizontal scrolling)
+- **Multiple unchanged sections**: Large blocks of identical code (tests folding)
+- **Various change types**: Additions, removals, and modifications
+- **Realistic code**: A complete JavaScript class with documentation
 
 ## Keyboard Shortcuts
 
