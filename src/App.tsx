@@ -159,37 +159,18 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
     }
   }, [currentLine, diffSections]);
 
+  // Disabled for now - causing rendering issues
+  // Will re-implement with better approach later
   const renderInlineDiff = (leftContent: string, rightContent: string, type: 'remove' | 'add', isCurrent: boolean) => {
-    // Compare left and right to find word-level changes
-    const changes = Diff.diffWords(leftContent, rightContent);
     const content = type === 'remove' ? leftContent : rightContent;
-
-    // For the line we're rendering, show which parts changed
-    const parts: JSX.Element[] = [];
-    let partIndex = 0;
-
-    for (const change of changes) {
-      const isRelevant = (type === 'remove' && !change.added) || (type === 'add' && !change.removed);
-
-      if (isRelevant) {
-        const color = getColorForType(type);
-        const isChanged = (type === 'remove' && change.removed) || (type === 'add' && change.added);
-
-        parts.push(
-          <Text
-            key={partIndex++}
-            color={color}
-            bold={isCurrent || isChanged}
-            inverse={isChanged && !isCurrent}
-            dimColor={!isChanged}
-          >
-            {change.value}
-          </Text>
-        );
-      }
-    }
-
-    return <>{parts}</>;
+    return (
+      <Text
+        color={getColorForType(type)}
+        bold={isCurrent}
+      >
+        {content}
+      </Text>
+    );
   };
 
   const renderLines = () => {
