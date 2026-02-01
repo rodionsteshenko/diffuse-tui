@@ -24,6 +24,9 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
   const [scrollOffset, setScrollOffset] = useState(0);
   const [diffSections, setDiffSections] = useState<DiffSection[]>([]);
   const [totalLines, setTotalLines] = useState(0);
+  const [showHelp, setShowHelp] = useState(false);
+  const [foldingEnabled, setFoldingEnabled] = useState(true);
+  const contextLines = 3; // Number of context lines to show above/below changes
 
   const terminalHeight = process.stdout.rows || 24;
   const viewHeight = terminalHeight - 3; // Account for header and footer
@@ -47,6 +50,26 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
   }, [currentLine, viewHeight]);
 
   useInput((input: string, key: any) => {
+    // Toggle help screen
+    if (input === '?') {
+      setShowHelp(!showHelp);
+      return;
+    }
+
+    // Ignore other inputs when help is shown
+    if (showHelp) {
+      if (key.escape) {
+        setShowHelp(false);
+      }
+      return;
+    }
+
+    // Toggle folding
+    if (input === 'f' || input === 'F') {
+      setFoldingEnabled(!foldingEnabled);
+      return;
+    }
+
     if (input === 'q' || (key.ctrl && input === 'c')) {
       exit();
       return;
@@ -136,6 +159,39 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
     }
   }, [currentLine, diffSections]);
 
+  const renderInlineDiff = (leftContent: string, rightContent: string, type: 'remove' | 'add', isCurrent: boolean) => {
+    // Compare left and right to find word-level changes
+    const changes = Diff.diffWords(leftContent, rightContent);
+    const content = type === 'remove' ? leftContent : rightContent;
+
+    // For the line we're rendering, show which parts changed
+    const parts: JSX.Element[] = [];
+    let partIndex = 0;
+
+    for (const change of changes) {
+      const isRelevant = (type === 'remove' && !change.added) || (type === 'add' && !change.removed);
+
+      if (isRelevant) {
+        const color = getColorForType(type);
+        const isChanged = (type === 'remove' && change.removed) || (type === 'add' && change.added);
+
+        parts.push(
+          <Text
+            key={partIndex++}
+            color={color}
+            bold={isCurrent || isChanged}
+            inverse={isChanged && !isCurrent}
+            dimColor={!isChanged}
+          >
+            {change.value}
+          </Text>
+        );
+      }
+    }
+
+    return <>{parts}</>;
+  };
+
   const renderLines = () => {
     const lines: JSX.Element[] = [];
     let globalLineIndex = 0;
@@ -149,7 +205,37 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       const hasChanges = section.leftLines.some(l => l.type !== 'equal') ||
                         section.rightLines.some(l => l.type !== 'equal');
 
+      // Determine if this section should be folded
+      const shouldFold = foldingEnabled && !hasChanges && maxLines > (contextLines * 2 + 1);
+      const foldedLinesCount = shouldFold ? maxLines - (contextLines * 2) : 0;
+
       for (let i = 0; i < maxLines; i++) {
+        // Handle folding: skip middle lines if this section is folded
+        if (shouldFold) {
+          if (i === contextLines) {
+            // Insert fold placeholder
+            if (globalLineIndex >= scrollOffset && globalLineIndex < scrollOffset + viewHeight) {
+              lines.push(
+                <Box key={`fold-${globalLineIndex}`} flexDirection="row">
+                  <Box flexGrow={1} justifyContent="center">
+                    <Text dimColor>
+                      ⋯ {foldedLinesCount} unchanged lines (press F to unfold) ⋯
+                    </Text>
+                  </Box>
+                </Box>
+              );
+            }
+            globalLineIndex++;
+            // Skip to last contextLines
+            i = maxLines - contextLines - 1;
+            // Update line numbers for skipped lines
+            const skippedLines = foldedLinesCount;
+            leftLineNum += skippedLines;
+            rightLineNum += skippedLines;
+            continue;
+          }
+        }
+
         if (globalLineIndex < scrollOffset) {
           const leftLine = section.leftLines[i];
           const rightLine = section.rightLines[i];
@@ -191,6 +277,10 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
           }
         }
 
+        // Check if we should show inline diff (both sides have content and are changes)
+        const showInlineDiff = leftLine.type === 'remove' && rightLine.type === 'add' &&
+                               leftLine.content && rightLine.content;
+
         lines.push(
           <Box key={globalLineIndex} flexDirection="row">
             {/* Left side with line number */}
@@ -198,13 +288,17 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
               <Text color={isCurrentLine ? 'yellow' : 'gray'} bold={isCurrentLine}>
                 {leftNum}{leftPrefix}
               </Text>
-              <Text
-                color={getColorForType(leftLine.type)}
-                bold={isCurrentLine}
-                dimColor={leftLine.type === 'empty'}
-              >
-                {leftLine.content || (leftLine.type === 'empty' ? '⋯' : ' ')}
-              </Text>
+              {showInlineDiff ? (
+                renderInlineDiff(leftLine.content, rightLine.content, 'remove', isCurrentLine)
+              ) : (
+                <Text
+                  color={getColorForType(leftLine.type)}
+                  bold={isCurrentLine}
+                  dimColor={leftLine.type === 'empty'}
+                >
+                  {leftLine.content || (leftLine.type === 'empty' ? '⋯' : ' ')}
+                </Text>
+              )}
             </Box>
 
             {/* Divider with connection markers */}
@@ -215,13 +309,17 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
               <Text color={isCurrentLine ? 'yellow' : 'gray'} bold={isCurrentLine}>
                 {rightNum}{rightPrefix}
               </Text>
-              <Text
-                color={getColorForType(rightLine.type)}
-                bold={isCurrentLine}
-                dimColor={rightLine.type === 'empty'}
-              >
-                {rightLine.content || (rightLine.type === 'empty' ? '⋯' : ' ')}
-              </Text>
+              {showInlineDiff ? (
+                renderInlineDiff(leftLine.content, rightLine.content, 'add', isCurrentLine)
+              ) : (
+                <Text
+                  color={getColorForType(rightLine.type)}
+                  bold={isCurrentLine}
+                  dimColor={rightLine.type === 'empty'}
+                >
+                  {rightLine.content || (rightLine.type === 'empty' ? '⋯' : ' ')}
+                </Text>
+              )}
             </Box>
           </Box>
         );
@@ -258,9 +356,45 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       <Box borderStyle="single" paddingX={1}>
         <Text>
           Line {currentLine + 1}/{totalLines} | Section {currentSection + 1}/{diffSections.length} |
-          <Text color="gray"> ↑↓:line | n/p:section | u/d:page | q:quit</Text>
+          <Text color={foldingEnabled ? 'green' : 'gray'}> Fold:{foldingEnabled ? 'ON' : 'OFF'}</Text> |
+          <Text color="gray"> ↑↓:line | n/p:section | u/d:page | f:fold | ?:help | q:quit</Text>
         </Text>
       </Box>
+
+      {/* Help Modal Overlay */}
+      {showHelp && (
+        <Box
+          position="absolute"
+          width="100%"
+          height="100%"
+          justifyContent="center"
+          alignItems="center"
+        >
+          <Box
+            borderStyle="double"
+            borderColor="cyan"
+            paddingX={2}
+            paddingY={1}
+            flexDirection="column"
+          >
+            <Text bold color="cyan">Keyboard Shortcuts</Text>
+            <Text> </Text>
+            <Text><Text color="yellow">Navigation:</Text></Text>
+            <Text>  ↑ / ↓         Navigate line by line</Text>
+            <Text>  n / p         Jump to next/previous changed section</Text>
+            <Text>  u / d         Page up / page down</Text>
+            <Text>  Shift + ↑↓    Page up / page down (alternative)</Text>
+            <Text>  Cmd/Ctrl + ↑↓ Jump sections (alternative)</Text>
+            <Text> </Text>
+            <Text><Text color="yellow">Actions:</Text></Text>
+            <Text>  f             Toggle folding of unchanged sections</Text>
+            <Text>  ?             Toggle this help screen</Text>
+            <Text>  q / Ctrl+C    Quit</Text>
+            <Text> </Text>
+            <Text dimColor>Press ? or ESC to close</Text>
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 };
