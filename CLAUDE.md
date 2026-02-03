@@ -80,8 +80,8 @@ Three navigation modes:
 ### File Editing
 
 The right file can be edited by copying diffs:
-- **Option+Right**: Copy current diff section from left to right (applies the left side's version)
-- **Option+Left**: Restore original right content for current section
+- **] or >**: Copy current diff section from left to right (applies the left side's version)
+- **[ or <**: Restore original right content for current section
 - **Ctrl+S**: Save changes to right file
 - **Ctrl+Z**: Undo last edit
 
