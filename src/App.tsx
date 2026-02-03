@@ -288,8 +288,8 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       return;
     }
 
-    // Copy right to left / restore original: [ or <
-    if (input === '[' || input === '<') {
+    // Restore original right content: < or r
+    if (input === '<' || input === 'r') {
       copyRightToLeft();
       return;
     }
@@ -601,7 +601,7 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
             <Text> </Text>
             <Text><Text color="yellow">Editing:</Text></Text>
             <Text>  ] or &gt;        Copy diff from left to right</Text>
-            <Text>  [ or &lt;        Restore original right content</Text>
+            <Text>  &lt; or r        Restore original right content</Text>
             <Text>  Ctrl + S      Save changes to right file</Text>
             <Text>  Ctrl + Z      Undo last edit</Text>
             <Text> </Text>
