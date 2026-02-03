@@ -46,6 +46,11 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
   const [gotoMode, setGotoMode] = useState(false);
   const [gotoInput, setGotoInput] = useState('');
 
+  // Insert mode state
+  const [insertMode, setInsertMode] = useState(false);
+  const [cursorPos, setCursorPos] = useState(0);
+  const [killRing, setKillRing] = useState(''); // For Ctrl+K/Y (kill/yank)
+
   // Check if file has been edited
   const isEdited = editedRightContent !== rightContent;
 
@@ -296,6 +301,68 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
     }
   }, [isEdited, exit]);
 
+  // Get the actual right file line number for the current display line
+  const getCurrentRightLineIndex = useCallback((): number | null => {
+    let lineCount = 0;
+    let rightLineIndex = 0;
+
+    for (const section of diffSections) {
+      const maxLines = Math.max(section.leftLines.length, section.rightLines.length);
+      const hasChanges = section.leftLines.some(l => l.type !== 'equal') ||
+                        section.rightLines.some(l => l.type !== 'equal');
+      const shouldFold = foldingEnabled && !hasChanges && maxLines > (contextLines * 2 + 1);
+
+      for (let i = 0; i < maxLines; i++) {
+        if (shouldFold && i >= contextLines && i < maxLines - contextLines) {
+          // Folded region - skip these lines
+          const rightLine = section.rightLines[i];
+          if (rightLine && rightLine.type !== 'empty') rightLineIndex++;
+          continue;
+        }
+
+        if (lineCount === currentLine) {
+          const rightLine = section.rightLines[i];
+          if (rightLine && rightLine.type !== 'empty') {
+            return rightLineIndex;
+          }
+          return null; // Current line is empty on right side
+        }
+
+        const rightLine = section.rightLines[i];
+        if (rightLine && rightLine.type !== 'empty') rightLineIndex++;
+        lineCount++;
+
+        // Account for fold placeholder
+        if (shouldFold && i === contextLines - 1) {
+          lineCount++; // fold placeholder
+          i = maxLines - contextLines - 1;
+        }
+      }
+    }
+    return null;
+  }, [currentLine, diffSections, foldingEnabled]);
+
+  // Get current right line content
+  const getCurrentRightLineContent = useCallback((): string => {
+    const idx = getCurrentRightLineIndex();
+    if (idx === null) return '';
+    const lines = editedRightContent.split('\n');
+    return lines[idx] || '';
+  }, [getCurrentRightLineIndex, editedRightContent]);
+
+  // Update current right line content
+  const setCurrentRightLineContent = useCallback((newContent: string) => {
+    const idx = getCurrentRightLineIndex();
+    if (idx === null) return;
+
+    // Save for undo
+    setUndoStack(prev => [...prev, editedRightContent]);
+
+    const lines = editedRightContent.split('\n');
+    lines[idx] = newContent;
+    setEditedRightContent(lines.join('\n'));
+  }, [getCurrentRightLineIndex, editedRightContent]);
+
   useEffect(() => {
     // Auto-scroll to keep current line visible
     if (currentLine < scrollOffset) {
@@ -386,6 +453,108 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       return;
     }
 
+    // Handle insert mode input
+    if (insertMode) {
+      const lineContent = getCurrentRightLineContent();
+
+      if (key.escape) {
+        setInsertMode(false);
+        return;
+      }
+
+      // Emacs keybindings
+      // Ctrl+A - beginning of line
+      if (key.ctrl && input === 'a') {
+        setCursorPos(0);
+        return;
+      }
+      // Ctrl+E - end of line
+      if (key.ctrl && input === 'e') {
+        setCursorPos(lineContent.length);
+        return;
+      }
+      // Ctrl+K - kill to end of line
+      if (key.ctrl && input === 'k') {
+        const killed = lineContent.slice(cursorPos);
+        setKillRing(killed);
+        setCurrentRightLineContent(lineContent.slice(0, cursorPos));
+        return;
+      }
+      // Ctrl+Y - yank (paste)
+      if (key.ctrl && input === 'y') {
+        const newContent = lineContent.slice(0, cursorPos) + killRing + lineContent.slice(cursorPos);
+        setCurrentRightLineContent(newContent);
+        setCursorPos(cursorPos + killRing.length);
+        return;
+      }
+      // Ctrl+D - delete character forward
+      if (key.ctrl && input === 'd') {
+        if (cursorPos < lineContent.length) {
+          const newContent = lineContent.slice(0, cursorPos) + lineContent.slice(cursorPos + 1);
+          setCurrentRightLineContent(newContent);
+        }
+        return;
+      }
+      // Ctrl+W - kill word backward
+      if (key.ctrl && input === 'w') {
+        // Find start of previous word
+        let pos = cursorPos;
+        while (pos > 0 && lineContent[pos - 1] === ' ') pos--;
+        while (pos > 0 && lineContent[pos - 1] !== ' ') pos--;
+        const killed = lineContent.slice(pos, cursorPos);
+        setKillRing(killed);
+        const newContent = lineContent.slice(0, pos) + lineContent.slice(cursorPos);
+        setCurrentRightLineContent(newContent);
+        setCursorPos(pos);
+        return;
+      }
+
+      // Arrow keys for cursor movement
+      if (key.leftArrow) {
+        setCursorPos(Math.max(0, cursorPos - 1));
+        return;
+      }
+      if (key.rightArrow) {
+        setCursorPos(Math.min(lineContent.length, cursorPos + 1));
+        return;
+      }
+
+      // Backspace
+      if (key.backspace) {
+        if (cursorPos > 0) {
+          const newContent = lineContent.slice(0, cursorPos - 1) + lineContent.slice(cursorPos);
+          setCurrentRightLineContent(newContent);
+          setCursorPos(cursorPos - 1);
+        }
+        return;
+      }
+
+      // Delete
+      if (key.delete) {
+        if (cursorPos < lineContent.length) {
+          const newContent = lineContent.slice(0, cursorPos) + lineContent.slice(cursorPos + 1);
+          setCurrentRightLineContent(newContent);
+        }
+        return;
+      }
+
+      // Enter - exit insert mode and move to next line
+      if (key.return) {
+        setInsertMode(false);
+        setCurrentLine(Math.min(totalLines - 1, currentLine + 1));
+        setCursorPos(0);
+        return;
+      }
+
+      // Regular character input
+      if (input && !key.ctrl && !key.meta) {
+        const newContent = lineContent.slice(0, cursorPos) + input + lineContent.slice(cursorPos);
+        setCurrentRightLineContent(newContent);
+        setCursorPos(cursorPos + input.length);
+      }
+      return;
+    }
+
     // Toggle help screen
     if (input === '?') {
       setShowHelp(!showHelp);
@@ -434,6 +603,18 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
     if (key.escape && searchQuery) {
       setSearchQuery('');
       setSearchMatches([]);
+      return;
+    }
+
+    // Enter insert mode (i or e)
+    if (input === 'i' || input === 'e') {
+      const idx = getCurrentRightLineIndex();
+      if (idx !== null) {
+        setInsertMode(true);
+        setCursorPos(getCurrentRightLineContent().length); // Start at end of line
+      } else {
+        setSaveMessage('Cannot edit - no right line at cursor');
+      }
       return;
     }
 
@@ -747,6 +928,11 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
             <Text color="gray">█</Text>
             <Text color="gray"> | Enter:go | Esc:cancel</Text>
           </Text>
+        ) : insertMode ? (
+          <Text>
+            <Text color="green" bold>-- INSERT --</Text>
+            <Text> | ^A:start ^E:end ^K:kill ^Y:yank ^W:kill-word | Esc:exit</Text>
+          </Text>
         ) : (
           <Text>
             Line {currentLine + 1}/{totalLines} | Section {currentSection + 1}/{diffSections.length} |
@@ -757,7 +943,7 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
             )}
             {saveMessage && <Text color="cyan"> | {saveMessage}</Text>}
             {horizontalOffset > 0 && <Text color="yellow"> | Scroll→{horizontalOffset}</Text>} |
-            <Text color="gray"> /:search | g:goto | ?:help</Text>
+            <Text color="gray"> i:edit | /:search | g:goto | ?:help</Text>
           </Text>
         )}
       </Box>
@@ -792,10 +978,19 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
             <Text>  f             Toggle folding of unchanged sections</Text>
             <Text> </Text>
             <Text><Text color="yellow">Editing:</Text></Text>
+            <Text>  i or e        Enter insert mode (edit current line)</Text>
             <Text>  ] or &gt;        Copy diff from left to right</Text>
             <Text>  [ or &lt;        Undo last edit (same as Ctrl+Z)</Text>
             <Text>  Ctrl + S      Save changes to right file</Text>
             <Text>  Ctrl + Z      Undo last edit</Text>
+            <Text> </Text>
+            <Text><Text color="yellow">Insert Mode (emacs keybindings):</Text></Text>
+            <Text>  Ctrl+A/E     Jump to beginning/end of line</Text>
+            <Text>  Ctrl+K       Kill (cut) to end of line</Text>
+            <Text>  Ctrl+Y       Yank (paste)</Text>
+            <Text>  Ctrl+D       Delete character forward</Text>
+            <Text>  Ctrl+W       Kill word backward</Text>
+            <Text>  Esc          Exit insert mode</Text>
             <Text> </Text>
             <Text><Text color="yellow">Search &amp; Navigation:</Text></Text>
             <Text>  / or Ctrl+F  Search (Enter to confirm, Esc to cancel)</Text>
