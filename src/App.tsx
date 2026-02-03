@@ -282,14 +282,14 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       return;
     }
 
-    // Copy left to right (Option/Alt + Right)
-    if (key.meta && key.rightArrow) {
+    // Copy left to right: ] or >
+    if (input === ']' || input === '>') {
       copyLeftToRight();
       return;
     }
 
-    // Copy right to left / restore original (Option/Alt + Left)
-    if (key.meta && key.leftArrow) {
+    // Copy right to left / restore original: [ or <
+    if (input === '[' || input === '<') {
       copyRightToLeft();
       return;
     }
@@ -566,7 +566,7 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
           {isEdited && <Text color="yellow" bold> [MODIFIED]</Text>}
           {saveMessage && <Text color="cyan"> | {saveMessage}</Text>}
           {horizontalOffset > 0 && <Text color="yellow"> | Scroll→{horizontalOffset}</Text>} |
-          <Text color="gray"> ⌥→:copy | ^S:save | ?:help</Text>
+          <Text color="gray"> ]:copy | ^S:save | ?:help</Text>
         </Text>
       </Box>
 
@@ -600,8 +600,8 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
             <Text>  f             Toggle folding of unchanged sections</Text>
             <Text> </Text>
             <Text><Text color="yellow">Editing:</Text></Text>
-            <Text>  ⌥ + →         Copy diff from left to right</Text>
-            <Text>  ⌥ + ←         Restore original right content</Text>
+            <Text>  ] or &gt;        Copy diff from left to right</Text>
+            <Text>  [ or &lt;        Restore original right content</Text>
             <Text>  Ctrl + S      Save changes to right file</Text>
             <Text>  Ctrl + Z      Undo last edit</Text>
             <Text> </Text>
