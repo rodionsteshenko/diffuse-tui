@@ -36,6 +36,16 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
   const [showQuitConfirm, setShowQuitConfirm] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
+  // Search state
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMatches, setSearchMatches] = useState<number[]>([]); // Line indices with matches
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+
+  // Go-to-line state
+  const [gotoMode, setGotoMode] = useState(false);
+  const [gotoInput, setGotoInput] = useState('');
+
   // Check if file has been edited
   const isEdited = editedRightContent !== rightContent;
 
@@ -64,6 +74,59 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
     const sections = computeDiffSections(leftContent, editedRightContent);
     setDiffSections(sections);
   }, [leftContent, editedRightContent]);
+
+  // Find search matches when query changes
+  useEffect(() => {
+    if (!searchQuery) {
+      setSearchMatches([]);
+      setCurrentMatchIndex(0);
+      return;
+    }
+
+    const matches: number[] = [];
+    let globalLineIndex = 0;
+    const query = searchQuery.toLowerCase();
+
+    for (const section of diffSections) {
+      const maxLines = Math.max(section.leftLines.length, section.rightLines.length);
+      const hasChanges = section.leftLines.some(l => l.type !== 'equal') ||
+                        section.rightLines.some(l => l.type !== 'equal');
+      const shouldFold = foldingEnabled && !hasChanges && maxLines > (contextLines * 2 + 1);
+
+      for (let i = 0; i < maxLines; i++) {
+        // Skip folded lines for matching
+        if (shouldFold && i >= contextLines && i < maxLines - contextLines) {
+          continue;
+        }
+
+        const leftLine = section.leftLines[i];
+        const rightLine = section.rightLines[i];
+
+        const leftMatch = leftLine && leftLine.content.toLowerCase().includes(query);
+        const rightMatch = rightLine && rightLine.content.toLowerCase().includes(query);
+
+        if (leftMatch || rightMatch) {
+          matches.push(globalLineIndex);
+        }
+
+        globalLineIndex++;
+
+        // Account for fold placeholder line
+        if (shouldFold && i === contextLines - 1) {
+          globalLineIndex++; // fold placeholder
+          i = maxLines - contextLines - 1; // skip to end context
+        }
+      }
+    }
+
+    setSearchMatches(matches);
+    setCurrentMatchIndex(0);
+
+    // Jump to first match
+    if (matches.length > 0) {
+      setCurrentLine(matches[0]);
+    }
+  }, [searchQuery, diffSections, foldingEnabled]);
 
   // Calculate total display lines accounting for folding
   useEffect(() => {
@@ -256,6 +319,73 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       return;
     }
 
+    // Handle search mode input
+    if (searchMode) {
+      if (key.escape) {
+        setSearchMode(false);
+        setSearchQuery('');
+        return;
+      }
+      if (key.return) {
+        // Confirm search, exit search mode but keep highlights
+        setSearchMode(false);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setSearchQuery(prev => prev.slice(0, -1));
+        return;
+      }
+      // Navigate matches with Ctrl+n/Ctrl+p while in search mode
+      if (key.ctrl && input === 'n') {
+        if (searchMatches.length > 0) {
+          const nextIndex = (currentMatchIndex + 1) % searchMatches.length;
+          setCurrentMatchIndex(nextIndex);
+          setCurrentLine(searchMatches[nextIndex]);
+        }
+        return;
+      }
+      if (key.ctrl && input === 'p') {
+        if (searchMatches.length > 0) {
+          const prevIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
+          setCurrentMatchIndex(prevIndex);
+          setCurrentLine(searchMatches[prevIndex]);
+        }
+        return;
+      }
+      // Add character to search query
+      if (input && !key.ctrl && !key.meta) {
+        setSearchQuery(prev => prev + input);
+      }
+      return;
+    }
+
+    // Handle go-to-line mode input
+    if (gotoMode) {
+      if (key.escape) {
+        setGotoMode(false);
+        setGotoInput('');
+        return;
+      }
+      if (key.return) {
+        const lineNum = parseInt(gotoInput, 10);
+        if (!isNaN(lineNum) && lineNum >= 1 && lineNum <= totalLines) {
+          setCurrentLine(lineNum - 1); // Convert to 0-indexed
+        }
+        setGotoMode(false);
+        setGotoInput('');
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setGotoInput(prev => prev.slice(0, -1));
+        return;
+      }
+      // Only accept digits
+      if (input && /^\d$/.test(input)) {
+        setGotoInput(prev => prev + input);
+      }
+      return;
+    }
+
     // Toggle help screen
     if (input === '?') {
       setShowHelp(!showHelp);
@@ -267,6 +397,43 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       if (key.escape) {
         setShowHelp(false);
       }
+      return;
+    }
+
+    // Enter search mode (/ or Ctrl+F)
+    if (input === '/' || (key.ctrl && input === 'f')) {
+      setSearchMode(true);
+      setSearchQuery('');
+      return;
+    }
+
+    // Enter go-to-line mode (: or Ctrl+G or g)
+    if (input === ':' || input === 'g' || input === 'G' || (key.ctrl && input === 'g')) {
+      setGotoMode(true);
+      setGotoInput('');
+      return;
+    }
+
+    // Navigate search matches (when not in search mode but have matches)
+    if (searchMatches.length > 0) {
+      if (key.ctrl && input === 'n') {
+        const nextIndex = (currentMatchIndex + 1) % searchMatches.length;
+        setCurrentMatchIndex(nextIndex);
+        setCurrentLine(searchMatches[nextIndex]);
+        return;
+      }
+      if (key.ctrl && input === 'p') {
+        const prevIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
+        setCurrentMatchIndex(prevIndex);
+        setCurrentLine(searchMatches[prevIndex]);
+        return;
+      }
+    }
+
+    // Clear search with Escape
+    if (key.escape && searchQuery) {
+      setSearchQuery('');
+      setSearchMatches([]);
       return;
     }
 
@@ -560,14 +727,39 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
 
       {/* Footer */}
       <Box borderStyle="single" paddingX={1}>
-        <Text>
-          Line {currentLine + 1}/{totalLines} | Section {currentSection + 1}/{diffSections.length} |
-          <Text color={foldingEnabled ? 'green' : 'gray'}> Fold:{foldingEnabled ? 'ON' : 'OFF'}</Text>
-          {isEdited && <Text color="yellow" bold> [MODIFIED]</Text>}
-          {saveMessage && <Text color="cyan"> | {saveMessage}</Text>}
-          {horizontalOffset > 0 && <Text color="yellow"> | Scroll→{horizontalOffset}</Text>} |
-          <Text color="gray"> ]:copy | ^S:save | ?:help</Text>
-        </Text>
+        {searchMode ? (
+          <Text>
+            <Text color="cyan">Search: </Text>
+            <Text>{searchQuery}</Text>
+            <Text color="gray">█</Text>
+            {searchMatches.length > 0 && (
+              <Text color="green"> ({currentMatchIndex + 1}/{searchMatches.length} matches)</Text>
+            )}
+            {searchQuery && searchMatches.length === 0 && (
+              <Text color="red"> (no matches)</Text>
+            )}
+            <Text color="gray"> | Enter:confirm | Esc:cancel | ^N/^P:next/prev</Text>
+          </Text>
+        ) : gotoMode ? (
+          <Text>
+            <Text color="cyan">Go to line: </Text>
+            <Text>{gotoInput}</Text>
+            <Text color="gray">█</Text>
+            <Text color="gray"> | Enter:go | Esc:cancel</Text>
+          </Text>
+        ) : (
+          <Text>
+            Line {currentLine + 1}/{totalLines} | Section {currentSection + 1}/{diffSections.length} |
+            <Text color={foldingEnabled ? 'green' : 'gray'}> Fold:{foldingEnabled ? 'ON' : 'OFF'}</Text>
+            {isEdited && <Text color="yellow" bold> [MODIFIED]</Text>}
+            {searchMatches.length > 0 && (
+              <Text color="magenta"> | Search:{currentMatchIndex + 1}/{searchMatches.length}</Text>
+            )}
+            {saveMessage && <Text color="cyan"> | {saveMessage}</Text>}
+            {horizontalOffset > 0 && <Text color="yellow"> | Scroll→{horizontalOffset}</Text>} |
+            <Text color="gray"> /:search | g:goto | ?:help</Text>
+          </Text>
+        )}
       </Box>
 
       {/* Help Modal Overlay */}
@@ -604,6 +796,12 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
             <Text>  [ or &lt;        Undo last edit (same as Ctrl+Z)</Text>
             <Text>  Ctrl + S      Save changes to right file</Text>
             <Text>  Ctrl + Z      Undo last edit</Text>
+            <Text> </Text>
+            <Text><Text color="yellow">Search &amp; Navigation:</Text></Text>
+            <Text>  / or Ctrl+F  Search (Enter to confirm, Esc to cancel)</Text>
+            <Text>  Ctrl+N/P     Jump to next/previous match</Text>
+            <Text>  g or :       Go to line number</Text>
+            <Text>  Esc          Clear search</Text>
             <Text> </Text>
             <Text><Text color="yellow">Actions:</Text></Text>
             <Text>  ?             Toggle this help screen</Text>
