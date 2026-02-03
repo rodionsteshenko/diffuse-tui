@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import * as Diff from 'diff';
-import chalk from 'chalk';
+import { writeFileSync } from 'fs';
 
 interface AppProps {
   leftContent: string;
   rightContent: string;
   leftFile: string;
   rightFile: string;
+  onSave?: (content: string) => void;
 }
 
 interface DiffSection {
@@ -17,7 +18,7 @@ interface DiffSection {
   rightLines: Array<{ content: string; type: 'equal' | 'remove' | 'add' | 'empty' }>;
 }
 
-export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, rightFile }) => {
+export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, rightFile, onSave }) => {
   const { exit } = useApp();
   const [currentLine, setCurrentLine] = useState(0);
   const [currentSection, setCurrentSection] = useState(0);
@@ -27,20 +28,210 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
   const [showHelp, setShowHelp] = useState(false);
   const [foldingEnabled, setFoldingEnabled] = useState(true);
   const [horizontalOffset, setHorizontalOffset] = useState(0);
-  const [wordWrap, setWordWrap] = useState(false);
   const contextLines = 3; // Number of context lines to show above/below changes
 
+  // Editing state
+  const [editedRightContent, setEditedRightContent] = useState(rightContent);
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  // Check if file has been edited
+  const isEdited = editedRightContent !== rightContent;
+
   const terminalHeight = process.stdout.rows || 24;
-  const viewHeight = terminalHeight - 3; // Account for header and footer
+  const terminalWidth = process.stdout.columns || 80;
+  // Header with border: 3 lines (top border + content + bottom border)
+  // Footer with border: 3 lines (top border + content + bottom border)
+  const viewHeight = terminalHeight - 6;
+
+  // Calculate available width per column (accounting for line numbers, prefix, divider)
+  // Layout: [lineNum(4)][prefix(2)][content] │ [lineNum(4)][prefix(2)][content]
+  // Divider takes 3 chars: " │ "
+  const columnWidth = Math.floor((terminalWidth - 3) / 2); // Each side gets half minus divider
+  const contentWidth = Math.max(10, columnWidth - 6); // Subtract line number (4) and prefix (2), min 10 chars
+
+  // Helper to compute display line count for a section (accounts for folding)
+  const getSectionDisplayLines = (section: DiffSection) => {
+    const maxLines = Math.max(section.leftLines.length, section.rightLines.length);
+    const hasChanges = section.leftLines.some(l => l.type !== 'equal') ||
+                      section.rightLines.some(l => l.type !== 'equal');
+    const shouldFold = foldingEnabled && !hasChanges && maxLines > (contextLines * 2 + 1);
+    return shouldFold ? (contextLines * 2 + 1) : maxLines;
+  };
 
   useEffect(() => {
-    const sections = computeDiffSections(leftContent, rightContent);
+    const sections = computeDiffSections(leftContent, editedRightContent);
     setDiffSections(sections);
+  }, [leftContent, editedRightContent]);
 
-    // Calculate total lines
-    const total = sections.reduce((sum, section) => sum + Math.max(section.leftLines.length, section.rightLines.length), 0);
+  // Calculate total display lines accounting for folding
+  useEffect(() => {
+    const total = diffSections.reduce((sum, section) => sum + getSectionDisplayLines(section), 0);
     setTotalLines(total);
-  }, [leftContent, rightContent]);
+  }, [diffSections, foldingEnabled]);
+
+  // Clamp currentLine if it exceeds totalLines (e.g., when folding is toggled)
+  useEffect(() => {
+    if (currentLine >= totalLines && totalLines > 0) {
+      setCurrentLine(totalLines - 1);
+    }
+  }, [totalLines]);
+
+  // Clear save message after a delay
+  useEffect(() => {
+    if (saveMessage) {
+      const timer = setTimeout(() => setSaveMessage(null), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [saveMessage]);
+
+  // Get current line info (section index and line within section)
+  const getCurrentLineInfo = useCallback(() => {
+    let lineCount = 0;
+    for (let i = 0; i < diffSections.length; i++) {
+      const sectionLines = getSectionDisplayLines(diffSections[i]);
+      if (currentLine < lineCount + sectionLines) {
+        return { sectionIndex: i, lineInSection: currentLine - lineCount };
+      }
+      lineCount += sectionLines;
+    }
+    return null;
+  }, [currentLine, diffSections, foldingEnabled]);
+
+  // Copy diff from left to right for current section
+  const copyLeftToRight = useCallback(() => {
+    const info = getCurrentLineInfo();
+    if (!info) return;
+
+    const section = diffSections[info.sectionIndex];
+    if (!section) return;
+
+    // Only copy if this section has changes
+    const hasChanges = section.leftLines.some(l => l.type !== 'equal') ||
+                      section.rightLines.some(l => l.type !== 'equal');
+    if (!hasChanges) return;
+
+    // Save current state for undo
+    setUndoStack(prev => [...prev, editedRightContent]);
+
+    // Convert editedRightContent to lines array
+    const rightLines = editedRightContent.split('\n');
+
+    // Find the actual line numbers for this section
+    // We need to map display lines back to actual right file lines
+    let actualRightLineStart = 0;
+    let count = 0;
+    for (let i = 0; i < info.sectionIndex; i++) {
+      for (const line of diffSections[i].rightLines) {
+        if (line.type !== 'empty') {
+          actualRightLineStart++;
+        }
+      }
+    }
+
+    // Count non-empty right lines in this section
+    const rightLinesToRemove = section.rightLines.filter(l => l.type !== 'empty').length;
+
+    // Get the content from left side (non-empty lines only)
+    const leftLinesToAdd = section.leftLines
+      .filter(l => l.type !== 'empty')
+      .map(l => l.content);
+
+    // Replace the right side lines with left side lines
+    rightLines.splice(actualRightLineStart, rightLinesToRemove, ...leftLinesToAdd);
+
+    setEditedRightContent(rightLines.join('\n'));
+    setSaveMessage('Copied diff from left to right');
+  }, [getCurrentLineInfo, diffSections, editedRightContent]);
+
+  // Copy diff from right to left (undo a copy - restore original right content for section)
+  const copyRightToLeft = useCallback(() => {
+    const info = getCurrentLineInfo();
+    if (!info) return;
+
+    const section = diffSections[info.sectionIndex];
+    if (!section) return;
+
+    // Save current state for undo
+    setUndoStack(prev => [...prev, editedRightContent]);
+
+    // Get original right content for this section
+    const originalRightLines = rightContent.split('\n');
+    const currentRightLines = editedRightContent.split('\n');
+
+    // Find the actual line numbers for this section in original
+    let originalRightLineStart = 0;
+    const originalSections = computeDiffSections(leftContent, rightContent);
+    for (let i = 0; i < Math.min(info.sectionIndex, originalSections.length); i++) {
+      for (const line of originalSections[i].rightLines) {
+        if (line.type !== 'empty') {
+          originalRightLineStart++;
+        }
+      }
+    }
+
+    // Get original right lines for this section
+    const origSection = originalSections[info.sectionIndex];
+    if (!origSection) return;
+
+    const originalLinesToRestore = origSection.rightLines
+      .filter(l => l.type !== 'empty')
+      .map(l => l.content);
+
+    // Find current position in edited content
+    let currentRightLineStart = 0;
+    for (let i = 0; i < info.sectionIndex; i++) {
+      for (const line of diffSections[i].rightLines) {
+        if (line.type !== 'empty') {
+          currentRightLineStart++;
+        }
+      }
+    }
+
+    const currentLinesToRemove = section.rightLines.filter(l => l.type !== 'empty').length;
+
+    // Replace current lines with original lines
+    currentRightLines.splice(currentRightLineStart, currentLinesToRemove, ...originalLinesToRestore);
+
+    setEditedRightContent(currentRightLines.join('\n'));
+    setSaveMessage('Restored original right content');
+  }, [getCurrentLineInfo, diffSections, editedRightContent, rightContent, leftContent]);
+
+  // Save edited content to file
+  const saveFile = useCallback(() => {
+    try {
+      if (onSave) {
+        onSave(editedRightContent);
+      } else {
+        writeFileSync(rightFile, editedRightContent);
+      }
+      setSaveMessage(`Saved to ${rightFile}`);
+    } catch (error) {
+      setSaveMessage(`Error saving: ${error}`);
+    }
+  }, [editedRightContent, rightFile, onSave]);
+
+  // Undo last edit
+  const undoLastEdit = useCallback(() => {
+    if (undoStack.length === 0) {
+      setSaveMessage('Nothing to undo');
+      return;
+    }
+    const previousState = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, -1));
+    setEditedRightContent(previousState);
+    setSaveMessage('Undone');
+  }, [undoStack]);
+
+  // Handle quit with confirmation
+  const handleQuit = useCallback(() => {
+    if (isEdited) {
+      setShowQuitConfirm(true);
+    } else {
+      exit();
+    }
+  }, [isEdited, exit]);
 
   useEffect(() => {
     // Auto-scroll to keep current line visible
@@ -52,6 +243,19 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
   }, [currentLine, viewHeight]);
 
   useInput((input: string, key: any) => {
+    // Handle quit confirmation modal
+    if (showQuitConfirm) {
+      if (input === 'y' || input === 'Y') {
+        saveFile();
+        exit();
+      } else if (input === 'n' || input === 'N') {
+        exit();
+      } else if (key.escape || input === 'c' || input === 'C') {
+        setShowQuitConfirm(false);
+      }
+      return;
+    }
+
     // Toggle help screen
     if (input === '?') {
       setShowHelp(!showHelp);
@@ -66,33 +270,48 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       return;
     }
 
+    // Save file (Ctrl+S)
+    if (key.ctrl && input === 's') {
+      saveFile();
+      return;
+    }
+
+    // Undo (Ctrl+Z)
+    if (key.ctrl && input === 'z') {
+      undoLastEdit();
+      return;
+    }
+
+    // Copy left to right (Option/Alt + Right)
+    if (key.meta && key.rightArrow) {
+      copyLeftToRight();
+      return;
+    }
+
+    // Copy right to left / restore original (Option/Alt + Left)
+    if (key.meta && key.leftArrow) {
+      copyRightToLeft();
+      return;
+    }
+
     // Toggle folding
     if (input === 'f' || input === 'F') {
       setFoldingEnabled(!foldingEnabled);
       return;
     }
 
-    // Toggle word wrap
-    if (input === 'w' || input === 'W') {
-      setWordWrap(!wordWrap);
-      setHorizontalOffset(0); // Reset horizontal scroll when toggling wrap
+    // Horizontal scrolling
+    if (key.leftArrow && !key.shift && !key.meta && !key.ctrl) {
+      setHorizontalOffset(Math.max(0, horizontalOffset - 5));
+      return;
+    }
+    if (key.rightArrow && !key.shift && !key.meta && !key.ctrl) {
+      setHorizontalOffset(horizontalOffset + 5);
       return;
     }
 
-    // Horizontal scrolling (only when word wrap is off)
-    if (!wordWrap) {
-      if (key.leftArrow && !key.shift && !key.meta && !key.ctrl) {
-        setHorizontalOffset(Math.max(0, horizontalOffset - 5));
-        return;
-      }
-      if (key.rightArrow && !key.shift && !key.meta && !key.ctrl) {
-        setHorizontalOffset(horizontalOffset + 5);
-        return;
-      }
-    }
-
     if (input === 'q' || (key.ctrl && input === 'c')) {
-      exit();
+      handleQuit();
       return;
     }
 
@@ -100,25 +319,23 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
     const jumpToPrevSection = () => {
       // Find the first section with changes before current line
       let targetSection = -1;
+      let targetLineOffset = 0;
       let lineCount = 0;
 
       for (let i = 0; i < diffSections.length; i++) {
-        const sectionLines = Math.max(diffSections[i].leftLines.length, diffSections[i].rightLines.length);
+        const sectionLines = getSectionDisplayLines(diffSections[i]);
         const hasChanges = diffSections[i].leftLines.some(l => l.type !== 'equal') ||
                           diffSections[i].rightLines.some(l => l.type !== 'equal');
 
         if (lineCount < currentLine && hasChanges) {
           targetSection = i;
+          targetLineOffset = lineCount;
         }
         lineCount += sectionLines;
       }
 
       if (targetSection >= 0) {
-        const lineOffset = diffSections.slice(0, targetSection).reduce(
-          (sum, s) => sum + Math.max(s.leftLines.length, s.rightLines.length),
-          0
-        );
-        setCurrentLine(lineOffset);
+        setCurrentLine(targetLineOffset);
       }
     };
 
@@ -127,7 +344,7 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       let lineCount = 0;
 
       for (let i = 0; i < diffSections.length; i++) {
-        const sectionLines = Math.max(diffSections[i].leftLines.length, diffSections[i].rightLines.length);
+        const sectionLines = getSectionDisplayLines(diffSections[i]);
 
         if (lineCount > currentLine) {
           const hasChanges = diffSections[i].leftLines.some(l => l.type !== 'equal') ||
@@ -171,44 +388,27 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
   useEffect(() => {
     let lineCount = 0;
     for (let i = 0; i < diffSections.length; i++) {
-      const sectionLines = Math.max(diffSections[i].leftLines.length, diffSections[i].rightLines.length);
+      const sectionLines = getSectionDisplayLines(diffSections[i]);
       if (currentLine < lineCount + sectionLines) {
         setCurrentSection(i);
         break;
       }
       lineCount += sectionLines;
     }
-  }, [currentLine, diffSections]);
+  }, [currentLine, diffSections, foldingEnabled]);
 
-  // Disabled for now - causing rendering issues
-  // Will re-implement with better approach later
-  const renderInlineDiff = (leftContent: string, rightContent: string, type: 'remove' | 'add', isCurrent: boolean) => {
-    const content = type === 'remove' ? leftContent : rightContent;
-    return (
-      <Text
-        color={getColorForType(type)}
-        bold={isCurrent}
-        wrap={wordWrap ? 'wrap' : 'truncate-end'}
-      >
-        {content}
-      </Text>
-    );
-  };
 
-  const applyHorizontalScroll = (text: string): string => {
-    if (wordWrap || horizontalOffset === 0) {
-      return text;
-    }
-    return text.substring(horizontalOffset);
-  };
 
   const renderLines = () => {
     const lines: JSX.Element[] = [];
     let globalLineIndex = 0;
     let leftLineNum = 1;
     let rightLineNum = 1;
+    let viewportFull = false;
 
     for (const section of diffSections) {
+      if (viewportFull) break;
+
       const maxLines = Math.max(section.leftLines.length, section.rightLines.length);
 
       // Check if this section has any changes
@@ -255,6 +455,7 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
           continue;
         }
         if (globalLineIndex >= scrollOffset + viewHeight) {
+          viewportFull = true;
           break;
         }
 
@@ -269,76 +470,69 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
         const leftNum = leftLine.type !== 'empty' ? leftLineNum.toString().padStart(4) : '    ';
         const rightNum = rightLine.type !== 'empty' ? rightLineNum.toString().padStart(4) : '    ';
 
-        // Determine the divider character based on position in change section
-        let divider = ' │ ';
-        if (hasChanges) {
-          if (i === 0 && i === maxLines - 1) {
-            // Single line change - just a horizontal line
-            divider = '──┼──';
-          } else if (i === 0) {
-            // First line of multi-line change
-            divider = '╭─┼─╮';
-          } else if (i === maxLines - 1) {
-            // Last line of multi-line change
-            divider = '╰─┼─╯';
-          } else {
-            // Middle line of multi-line change
-            divider = '│ │ │';
-          }
-        }
+        // Simple consistent divider
+        const divider = ' │ ';
 
-        // Check if we should show inline diff (both sides have content and are changes)
-        const showInlineDiff = leftLine.type === 'remove' && rightLine.type === 'add' &&
-                               leftLine.content && rightLine.content;
+        // Get content for each side, applying horizontal scroll and truncation
+        const applyScrollAndTruncate = (text: string, maxWidth: number) => {
+          let result = text;
+          if (horizontalOffset > 0) {
+            result = result.substring(horizontalOffset);
+          }
+          // Truncate to prevent line wrapping
+          if (result.length > maxWidth) {
+            result = result.substring(0, maxWidth - 1) + '…';
+          }
+          return result;
+        };
+        // For 'empty' type (padding), show ⋯. For added/removed empty lines, show nothing (they still have line numbers)
+        const getDisplayContent = (line: { content: string; type: string }) => {
+          if (line.type === 'empty') return '⋯';
+          return line.content;
+        };
+        const leftContent = applyScrollAndTruncate(getDisplayContent(leftLine), contentWidth);
+        const rightContent = applyScrollAndTruncate(getDisplayContent(rightLine), contentWidth);
+
+        // Build complete line strings, padded to fixed width
+        const padToWidth = (str: string, width: number) => {
+          if (str.length >= width) return str.substring(0, width);
+          return str + ' '.repeat(width - str.length);
+        };
+        const leftLine_str = padToWidth(`${leftNum}${leftPrefix}${leftContent}`, columnWidth);
+        const rightLine_str = padToWidth(`${rightNum}${rightPrefix}${rightContent}`, columnWidth);
 
         lines.push(
-          <Box key={globalLineIndex} flexDirection="row">
-            {/* Left side with line number */}
-            <Box flexGrow={1} flexShrink={1} flexBasis={0}>
-              <Text color={isCurrentLine ? 'yellow' : 'gray'} bold={isCurrentLine}>
-                {leftNum}{leftPrefix}
-              </Text>
-              {showInlineDiff ? (
-                renderInlineDiff(applyHorizontalScroll(leftLine.content), rightLine.content, 'remove', isCurrentLine)
-              ) : (
-                <Text
-                  color={getColorForType(leftLine.type)}
-                  bold={isCurrentLine}
-                  dimColor={leftLine.type === 'empty'}
-                  wrap={wordWrap ? 'wrap' : 'truncate-end'}
-                >
-                  {applyHorizontalScroll(leftLine.content || (leftLine.type === 'empty' ? '⋯' : ' '))}
-                </Text>
-              )}
-            </Box>
+          <Box key={globalLineIndex} flexDirection="row" width={terminalWidth}>
+            {/* Left side */}
+            <Text
+              color={isCurrentLine ? 'yellow' : getColorForType(leftLine.type)}
+              bold={isCurrentLine}
+              dimColor={leftLine.type === 'empty'}
+              wrap="truncate"
+            >
+              {leftLine_str}
+            </Text>
 
-            {/* Divider with connection markers */}
+            {/* Divider */}
             <Text color="cyan">{divider}</Text>
 
-            {/* Right side with line number */}
-            <Box flexGrow={1} flexShrink={1} flexBasis={0}>
-              <Text color={isCurrentLine ? 'yellow' : 'gray'} bold={isCurrentLine}>
-                {rightNum}{rightPrefix}
-              </Text>
-              {showInlineDiff ? (
-                renderInlineDiff(leftLine.content, applyHorizontalScroll(rightLine.content), 'add', isCurrentLine)
-              ) : (
-                <Text
-                  color={getColorForType(rightLine.type)}
-                  bold={isCurrentLine}
-                  dimColor={rightLine.type === 'empty'}
-                  wrap={wordWrap ? 'wrap' : 'truncate-end'}
-                >
-                  {applyHorizontalScroll(rightLine.content || (rightLine.type === 'empty' ? '⋯' : ' '))}
-                </Text>
-              )}
-            </Box>
+            {/* Right side */}
+            <Text
+              color={isCurrentLine ? 'yellow' : getColorForType(rightLine.type)}
+              bold={isCurrentLine}
+              dimColor={rightLine.type === 'empty'}
+              wrap="truncate"
+            >
+              {rightLine_str}
+            </Text>
           </Box>
         );
 
         // Increment line numbers
-        if (leftLine.type !== 'empty') leftLineNum++;
-        if (rightLine.type !== 'empty') rightLineNum++;
+        const leftWasIncr = leftLine.type !== 'empty';
+        const rightWasIncr = rightLine.type !== 'empty';
+        if (leftWasIncr) leftLineNum++;
+        if (rightWasIncr) rightLineNum++;
         globalLineIndex++;
       }
     }
@@ -368,10 +562,11 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       <Box borderStyle="single" paddingX={1}>
         <Text>
           Line {currentLine + 1}/{totalLines} | Section {currentSection + 1}/{diffSections.length} |
-          <Text color={foldingEnabled ? 'green' : 'gray'}> Fold:{foldingEnabled ? 'ON' : 'OFF'}</Text> |
-          <Text color={wordWrap ? 'green' : 'gray'}> Wrap:{wordWrap ? 'ON' : 'OFF'}</Text>
-          {!wordWrap && horizontalOffset > 0 && <Text color="yellow"> Scroll→{horizontalOffset}</Text>} |
-          <Text color="gray"> {wordWrap ? '↑↓' : '←→↑↓'}:nav | w:wrap | f:fold | ?:help</Text>
+          <Text color={foldingEnabled ? 'green' : 'gray'}> Fold:{foldingEnabled ? 'ON' : 'OFF'}</Text>
+          {isEdited && <Text color="yellow" bold> [MODIFIED]</Text>}
+          {saveMessage && <Text color="cyan"> | {saveMessage}</Text>}
+          {horizontalOffset > 0 && <Text color="yellow"> | Scroll→{horizontalOffset}</Text>} |
+          <Text color="gray"> ⌥→:copy | ^S:save | ?:help</Text>
         </Text>
       </Box>
 
@@ -401,15 +596,48 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
             <Text>  Cmd/Ctrl + ↑↓ Jump sections (alternative)</Text>
             <Text> </Text>
             <Text><Text color="yellow">View:</Text></Text>
+            <Text>  ← / →         Horizontal scroll</Text>
             <Text>  f             Toggle folding of unchanged sections</Text>
-            <Text>  w             Toggle word wrap</Text>
-            <Text>  ← / →         Horizontal scroll (when wrap is off)</Text>
+            <Text> </Text>
+            <Text><Text color="yellow">Editing:</Text></Text>
+            <Text>  ⌥ + →         Copy diff from left to right</Text>
+            <Text>  ⌥ + ←         Restore original right content</Text>
+            <Text>  Ctrl + S      Save changes to right file</Text>
+            <Text>  Ctrl + Z      Undo last edit</Text>
             <Text> </Text>
             <Text><Text color="yellow">Actions:</Text></Text>
             <Text>  ?             Toggle this help screen</Text>
             <Text>  q / Ctrl+C    Quit</Text>
             <Text> </Text>
             <Text dimColor>Press ? or ESC to close</Text>
+          </Box>
+        </Box>
+      )}
+
+      {/* Quit Confirmation Modal */}
+      {showQuitConfirm && (
+        <Box
+          position="absolute"
+          width="100%"
+          height="100%"
+          justifyContent="center"
+          alignItems="center"
+        >
+          <Box
+            borderStyle="double"
+            borderColor="yellow"
+            paddingX={2}
+            paddingY={1}
+            flexDirection="column"
+          >
+            <Text bold color="yellow">Unsaved Changes</Text>
+            <Text> </Text>
+            <Text>You have unsaved changes to {rightFile}.</Text>
+            <Text>Save before quitting?</Text>
+            <Text> </Text>
+            <Text>  <Text color="green" bold>Y</Text> - Save and quit</Text>
+            <Text>  <Text color="red" bold>N</Text> - Quit without saving</Text>
+            <Text>  <Text color="gray" bold>C</Text> / ESC - Cancel</Text>
           </Box>
         </Box>
       )}

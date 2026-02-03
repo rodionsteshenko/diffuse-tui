@@ -1,6 +1,6 @@
 # Diffuse TUI
 
-A terminal-based diff viewer with keyboard navigation.
+A terminal-based side-by-side diff viewer with keyboard navigation.
 
 ## Installation
 
@@ -12,43 +12,38 @@ npm run build
 ## Usage
 
 ```bash
-# Compare the included test files (recommended for testing features)
-./diffuse test-original.js test-modified.js
-
-# Or using npm
-npm start test-original.js test-modified.js
-
-# Compare any two files
+# Compare two files
 ./diffuse file1.txt file2.txt
 
-# View a unified diff
-./diffuse -d changes.diff
+# Or using npm
+npm start file1.txt file2.txt
 
 # Demo mode (no arguments)
 npm start
 ```
 
-## Test Files
-
-The repository includes `test-original.js` and `test-modified.js` which demonstrate:
-- **Character-level diffs**: Single-word and multi-word changes
-- **Long lines**: Lines exceeding 100 characters (tests horizontal scrolling)
-- **Multiple unchanged sections**: Large blocks of identical code (tests folding)
-- **Various change types**: Additions, removals, and modifications
-- **Realistic code**: A complete JavaScript class with documentation
-
 ## Keyboard Shortcuts
 
+### Navigation
 - **↑ / ↓** - Navigate line by line
-- **n / p** - Jump to next/previous diff section (also works: Cmd/Ctrl + arrows)
-- **u / d** - Page up / page down (also works: Shift + arrows)
+- **n / p** - Jump to next/previous changed section
+- **u / d** - Page up / page down
+- **Shift + ↑/↓** - Page up / page down (alternative)
+- **Cmd/Ctrl + ↑/↓** - Jump sections (alternative)
+
+### View
+- **← / →** - Horizontal scroll (for long lines)
+- **f** - Toggle folding of unchanged sections
+
+### Other
+- **?** - Toggle help screen
 - **q** or **Ctrl+C** - Quit
 
 ## Features
 
-- Two-column side-by-side diff view
+- Side-by-side diff view with line numbers
 - Color-coded changes (green for additions, red for removals)
-- File names displayed at the top
 - Current line highlighting
-- Section and page navigation
-- Status bar with position information
+- Folding of large unchanged sections
+- Horizontal scrolling for long lines
+- In-app help screen

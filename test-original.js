@@ -5,6 +5,39 @@ import { Database } from './database';
 import { Logger } from './logger';
 import { validateEmail, validatePassword } from './validators';
 
+function hello() {
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+}
+
 /**
  * UserService handles all user-related operations
  * including authentication, profile management, and permissions

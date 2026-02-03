@@ -77,6 +77,21 @@ Three navigation modes:
 - **Section jumping**: `n`/`p` jump to next/previous *changed* section (skips `'equal'` sections)
 - **Page navigation**: `u`/`d` or Shift+arrows scroll by `viewHeight`
 
+### File Editing
+
+The right file can be edited by copying diffs:
+- **Option+Right**: Copy current diff section from left to right (applies the left side's version)
+- **Option+Left**: Restore original right content for current section
+- **Ctrl+S**: Save changes to right file
+- **Ctrl+Z**: Undo last edit
+
+State tracking:
+- `editedRightContent`: Current (possibly modified) right file content
+- `undoStack`: Stack of previous states for undo
+- `isEdited`: Derived boolean (editedRightContent !== rightContent)
+
+When quitting with unsaved changes, a confirmation modal appears (Y/N/Cancel).
+
 ### TypeScript Configuration
 
 Uses `"moduleResolution": "bundler"` (not `"node"`) for compatibility with Ink 5.x's ESM exports.

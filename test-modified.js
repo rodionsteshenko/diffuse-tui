@@ -7,6 +7,39 @@ import { EmailValidator, PasswordValidator, PhoneValidator } from './validators'
 import { CacheManager } from './cache';
 import { EventEmitter } from './events';
 
+function hello() {
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+  console.log('Hello, world!');
+}
+
 /**
  * UserService handles all user-related operations including authentication,
  * profile management, permissions, and role-based access control (RBAC)
