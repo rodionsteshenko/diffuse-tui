@@ -288,8 +288,8 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
       return;
     }
 
-    // Undo last edit: < or r (same as Ctrl+Z)
-    if (input === '<' || input === 'r') {
+    // Undo last edit: [ or < (same as Ctrl+Z)
+    if (input === '[' || input === '<') {
       undoLastEdit();
       return;
     }
@@ -601,7 +601,7 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
             <Text> </Text>
             <Text><Text color="yellow">Editing:</Text></Text>
             <Text>  ] or &gt;        Copy diff from left to right</Text>
-            <Text>  &lt; or r        Undo last edit (same as Ctrl+Z)</Text>
+            <Text>  [ or &lt;        Undo last edit (same as Ctrl+Z)</Text>
             <Text>  Ctrl + S      Save changes to right file</Text>
             <Text>  Ctrl + Z      Undo last edit</Text>
             <Text> </Text>
