@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
-import * as Diff from 'diff';
 import { writeFileSync } from 'fs';
+import { computeDiffSections, getColorForType, getPrefixForType } from './diff.js';
+import type { DiffSection } from './diff.js';
 
 interface AppProps {
   leftContent: string;
@@ -9,13 +10,6 @@ interface AppProps {
   leftFile: string;
   rightFile: string;
   onSave?: (content: string) => void;
-}
-
-interface DiffSection {
-  leftStart: number;
-  rightStart: number;
-  leftLines: Array<{ content: string; type: 'equal' | 'remove' | 'add' | 'empty' }>;
-  rightLines: Array<{ content: string; type: 'equal' | 'remove' | 'add' | 'empty' }>;
 }
 
 export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, rightFile, onSave }) => {
@@ -1038,112 +1032,4 @@ export const App: React.FC<AppProps> = ({ leftContent, rightContent, leftFile, r
   );
 };
 
-function computeDiffSections(left: string, right: string): DiffSection[] {
-  const leftLines = left.split('\n');
-  const rightLines = right.split('\n');
-
-  // Use diffArrays for cleaner line-by-line comparison
-  const changes = Diff.diffArrays(leftLines, rightLines);
-
-  const sections: DiffSection[] = [];
-  let leftIndex = 0;
-  let rightIndex = 0;
-
-  // Process changes and merge adjacent removed/added sections for vertical alignment
-  for (let i = 0; i < changes.length; i++) {
-    const change = changes[i];
-    const lines = Array.isArray(change.value) ? change.value : [change.value];
-
-    const section: DiffSection = {
-      leftStart: leftIndex,
-      rightStart: rightIndex,
-      leftLines: [],
-      rightLines: [],
-    };
-
-    if (change.removed && i + 1 < changes.length && changes[i + 1].added) {
-      // Removed section followed by added section - merge them with vertical alignment
-      const nextChange = changes[i + 1];
-      const nextLines = Array.isArray(nextChange.value) ? nextChange.value : [nextChange.value];
-
-      const maxLen = Math.max(lines.length, nextLines.length);
-
-      // Add lines vertically aligned (top-justified)
-      for (let j = 0; j < maxLen; j++) {
-        if (j < lines.length) {
-          section.leftLines.push({ content: lines[j], type: 'remove' });
-          leftIndex++;
-        } else {
-          section.leftLines.push({ content: '', type: 'empty' });
-        }
-
-        if (j < nextLines.length) {
-          section.rightLines.push({ content: nextLines[j], type: 'add' });
-          rightIndex++;
-        } else {
-          section.rightLines.push({ content: '', type: 'empty' });
-        }
-      }
-
-      i++; // Skip the next change since we processed it
-    } else if (change.added) {
-      // Pure addition (not paired with removal)
-      for (const line of lines) {
-        section.leftLines.push({ content: '', type: 'empty' });
-        section.rightLines.push({ content: line, type: 'add' });
-        rightIndex++;
-      }
-    } else if (change.removed) {
-      // Pure removal (not paired with addition)
-      for (const line of lines) {
-        section.leftLines.push({ content: line, type: 'remove' });
-        section.rightLines.push({ content: '', type: 'empty' });
-        leftIndex++;
-      }
-    } else {
-      // Equal lines
-      for (const line of lines) {
-        section.leftLines.push({ content: line, type: 'equal' });
-        section.rightLines.push({ content: line, type: 'equal' });
-        leftIndex++;
-        rightIndex++;
-      }
-    }
-
-    if (section.leftLines.length > 0 || section.rightLines.length > 0) {
-      sections.push(section);
-    }
-  }
-
-  return sections;
-}
-
-function getColorForType(type: 'equal' | 'remove' | 'add' | 'empty'): string {
-  switch (type) {
-    case 'add':
-      return 'green';
-    case 'remove':
-      return 'red';
-    case 'equal':
-      return 'white';
-    case 'empty':
-      return 'gray';
-    default:
-      return 'white';
-  }
-}
-
-function getPrefixForType(type: 'equal' | 'remove' | 'add' | 'empty'): string {
-  switch (type) {
-    case 'add':
-      return '+ ';
-    case 'remove':
-      return '- ';
-    case 'equal':
-      return '  ';
-    case 'empty':
-      return '  ';
-    default:
-      return '  ';
-  }
-}
+// diff logic extracted to ./diff.ts
